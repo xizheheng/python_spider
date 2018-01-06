@@ -19,4 +19,4 @@ MONGO_TABLE = 'meishi'
         db = client[MONGO_DB]
      2.3将数据存入指定数据库的数据表中
         db[MONGO_TABLE].insert(<要传入的数据，字典形式>)
-"""true]']
+"""
