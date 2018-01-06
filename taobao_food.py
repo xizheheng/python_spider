@@ -1,160 +1,125 @@
-"""使用selenium模仿浏览器抓取淘宝美食。
-    为什么要用selenium？
-    因为原始的document是通过js和ajax加载数据的，分析Ajax请求贼他妈烦
-    使用selenium可以抓到我们直接点击"审查元素"所看到的html代码。
-    步骤：
-        一.拿到网页源代码。
-            1.使用selenium模仿浏览器，搜索关键词为“美食”的结果，然后就得到了网页的html代码
-        二.分析代码，爬取相关信息。
-        三.存到数据库中。
-"""
 import re
-from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
+from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from pyquery import PyQuery as pq
-from config import *
 import pymongo
-
-
-# 将mongo客户端与本地MongoDB服务器相连
-client = pymongo.MongoClient(MONGO_URL)
-# 定义连接的数据库
-db = client[MONGO_DB]
+from config import *
 
 
 driver = webdriver.Chrome()
-# WebDriverWait设置网页加载等待时间，如果规定时间内未加载成功则抛出异常。
+# 设置等待时间
 wait = WebDriverWait(driver, 10)
+# 定义MongoDB客户端,将MongoDB客户端与指定的url相连接，此处为本地服务器。
+licent = pymongo.MongoClient(MONGO_URL)
+# 定义MongoDB数据库。
+db = licent[MONGO_DB]
 
 
-# 设置phantonjs的窗口大小
-# driver.set_window_size(1400, 900)
-
-
-# 写一个搜索关键字的方法
+# 定义一个搜索关键字的函数
+# try...except语句用于抛出TimeoutException.
 def search():
-    print('正在搜索...')
-    # 如果网速过慢或浏览器加载异常，会产生TimeOutException，所以使用try语句包含。
     try:
-        driver.get('https://www.taobao.com')
-        # 判断网页是否加载成功
-        # until是定位某一个元素(比如按钮，输入框)，它是设置某个条件来定位的。
-        # presence_of_element_located()是否存在这个元素，如果存在locate(定位)到这个元素。
-        search_box = wait.until(
+        driver.get('http://www.taobao.com')
+        # 判断搜索框是否加载成功并定位到搜索框
+        keys_input_box = wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, '#q'))
         )
-        # element_to_be_clickable()????????
+        # 判断元素是否是可点击的，若是则定位到这个按钮。
         submit_button = wait.until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, '#J_TSearchForm > div.search-button > button'))
         )
-        # 使用send_keys()方法发送关键字
-        search_box.send_keys('美食')
-        # click()代表点击这个按钮。
+        # 在搜索框内发送美食关键字。
+        keys_input_box.send_keys('美食')
+        # 点击提交按钮。
         submit_button.click()
+        # 获取页面的总页数，定位到总页数的元素部分
+        total_pages = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > div.total'))
+        )
         parse_the_page()
-        # 查看总共的页数
-        num_of_pages = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR,
-                                                                  '#mainsrp-pager > div > div > div > div.total')))
-        return num_of_pages.text
+        # text用于获取html标签内的内容。
+        return total_pages.text
     except TimeoutException:
         return search()
 
 
-# 实现页面翻页
-def turn_the_page(page_num):
-    print('正在翻页......', page_num)
+# 定义一个翻页的函数
+def turn_the_page(page_index):
     try:
+        # 检查页码输入框是否加载成功，若成功就定位到这个页码输入框。
         page_input_box = wait.until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > div.form > input')))
+            EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > div.form > input'))
+        )
+        # 检查元素是否加载成功，若成功检查元素是否可点击，若可点击，就定位到该元素。
         submit_button = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR,
-                                        '#mainsrp-pager > div > div > div > div.form > span.btn.J_Submit')))
-        # 首先清楚输入框中的内容
+            EC.element_to_be_clickable((By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > div.form > span.btn.J_Submit'))
+        )
+        # 清空页码输入框，若不清空的话，第一次输入2，第二次输入的就是23，第三次输入的就是234.
         page_input_box.clear()
-        # 然后输入页码，因为本来里面默认填2，再输入2的话就是22，再输入3的话就是223.
-        page_input_box.send_keys(page_num)
+        # 输入要跳转的页码
+        page_input_box.send_keys(page_index)
+        # 点击【确定】按钮
         submit_button.click()
-        # 判断是否翻页成功。
-        # text_to_be_present_in_element()是判断某个元素是否存在指定的文本。By.CSS_SELECTOR代表某个元素，str(page_num)代表指定文本。
-        # 调用函数时,参数超长时,多行显示,每行一个参数，首行不显示参数,余者按层次缩进显示。
-        wait.until(EC.text_to_be_present_in_element(
-            (By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > ul > li.item.active > span'),
-            str(page_num)))
+        # 检查页面是否跳转成功。若不成功程序就会中断。
+        # 使用text_to_be_present_in_element方法，它的作用是判断定位的元素的内容和后面的str参数是否相等。
+        # 定位的这个元素是如果在第n页，则这个元素高亮显示n。
+        # str(page_index)指的是输入的要跳转的页码。
+        wait.until(
+            EC.text_to_be_present_in_element(
+                (By.CSS_SELECTOR, '#mainsrp-pager > div > div > div > ul > li.item.active > span'),
+                str(page_index))
+        )
         parse_the_page()
+        print('这是第', page_index, '页')
     except TimeoutException:
-        turn_the_page(page_num)
-
-
-# 解析页面
-def parse_the_page():
-    # 先定位到指定的位置，同时也判断要爬取的html是否加载成功
-    wait.until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-itemlist .items .item'))
-    )
-    # 使用selenium中webdriver的page_source属性获取网页的html代码。
-    html = driver.page_source
-    # 使用pyquery解析html代码
-    doc = pq(html)
-    # items()得到所有选择的内容。
-    data = doc('#mainsrp-itemlist .items .item').items()
-    for item in data:
-        produce = {
-            'image': item.find('.pic .img').attr('src'),
-            'price': item.find('.price g_price g_price-highlight strong').text(),
-            'deal': item.find('.deal-cnt').text()[:-3],
-            'title': item.find('.baoyou-intitle icon-service-free').text(),
-            'shop': item.find('.shop').text(),
-            'location': item.find('.location').text()
-        }
-        print(produce)
-        save_to_mongo(produce)
-
-
-# 这是一个错误示范，导致我的程序一直出错。因为最后的print语句写到了for循环的外面，导致输出不了。
-# 以后要耐心检查，调试程序比写程序花的时间长。
-"""def parse_the_page():
-    # 先定位到指定的位置，同时也判断要爬取的html是否加载成功
-    wait.until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-itemlist .items .item'))
-    )
-    # 拿到网页的源代码
-    html = driver.page_source
-    doc = pq(html)
-    # item()方法得到所提取的html的内容
-    data = doc('#mainsrp-itemlist .items .item').items()
-    for item in data:
-        product = {
-            'image': item.find('.pic .img').attr('src'),
-            'price': item.find('.price g_price g_price-highlight strong').text(),
-            'deal': item.find('.deal-cnt').text()[:-3],
-            'title': item.find('.baoyou-intitle icon-service-free').text(),
-            'shop': item.find('.shop').text(),
-            'location': item.find('.location').text()
-        }
-    print(product)"""
+        return turn_the_page(page_index)
 
 
 def main():
-    # 返回页面总页数
-    num_of_pages = search()
-    # 使用正则表达式提取里面的数字
-    num_of_pages = int(re.compile("(\d+)").search(num_of_pages).group(1))
-    for i in range(2, num_of_pages + 1):
-        print('这是第', i, '页')
+    total_pages = search()
+    # 使用正则表达式提取内容【共 100 页】中的数字。
+    total_pages = int(re.compile('(\d+)').search(total_pages).group(1))
+    for i in range(2, total_pages+1):
         turn_the_page(i)
-    driver.close()
 
 
-# 参数data表示要传进去的数据,数据一般都是字典类型的。
+# 解析爬取页面
+def parse_the_page():
+    # 通过属性page_source获取网页的html代码，即点击【检查】看到的内容。
+    html = driver.page_source
+    # 使用pyquery解析数据
+    # 首先以html为参数创建pyquery对象
+    doc = pq(html)
+    # 定位到要爬取的元素，看是否加载成功。如果失败的话程序会中断。
+    wait.until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, '#mainsrp-itemlist .items .item'))
+    )
+    # 使用pyquery获取要爬取的元素。首先缩小爬取范围。
+    # 等会查看pyquery的API。
+    data = doc('#mainsrp-itemlist .items .item').items()
+    # 然后再小范围内爬取数据。
+    for item in data:
+        product = {
+            'title': item.find('.title .J_ClickStat').text(),
+            'price': item.find('.price').text(),
+            'shop': item.find('.shop .shopname').text(),
+            'pic': item.find('.pic .img').attr('src'),
+            'deal': item.find('.deal-cnt').text()[:-3],
+            'location': item.find('.location').text()
+        }
+        save_to_mongo(product)
+
+
+# 参数为要传入数据库的数据。
 def save_to_mongo(data):
     try:
         if db[MONGO_TABLE].insert(data):
-            print('存储到MongoDB成功', data)
+            print('存储到数据库成功', data)
     except Exception:
-        print('存储到MongoDB错误', data)
+        print('存储到数据库失败', data)
 
 
 if __name__ == '__main__':
